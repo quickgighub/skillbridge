@@ -12,10 +12,10 @@ import {
 const Footer = () => {
   const footerLinks = {
     platform: [
-      { name: "How It Works", href: "#how-it-works" },
-      { name: "Browse Jobs", href: "#categories" },
-      { name: "Pricing", href: "#pricing" },
-      { name: "Success Stories", href: "#testimonials" },
+      { name: "How It Works", href: "how-it-works" },
+      { name: "Browse Jobs", href: "categories" },
+      { name: "Pricing", href: "pricing" },
+      { name: "Success Stories", href: "testimonials" },
     ],
     freelancers: [
       { name: "Create Account", href: "/register" },

@@ -198,7 +198,7 @@ const Pricing = () => {
           {/* Trust Note */}
           <div className="text-center mt-12">
             <p className="text-muted-foreground text-sm">
-              All plans include a 2-day money-back guarantee. No questions asked.
+              All plans include guaranteed generous customer care. No questions asked.
             </p>
           </div>
 
