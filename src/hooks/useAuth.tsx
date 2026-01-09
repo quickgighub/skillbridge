@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, ReactNode, useCallback } from 'react';
+import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -30,10 +30,15 @@ interface AuthContextType {
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Cache for user data
+let cachedUserData: {
+  profile: Profile | null;
+  isAdmin: boolean;
+} | null = null;
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -42,16 +47,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch profile and admin status
-  const fetchProfileAndRole = useCallback(async (userId: string) => {
+  // Single function to fetch user data with caching
+  const fetchUserData = async (userId: string) => {
+    // Return cached data if available and user is the same
+    if (cachedUserData && user?.id === userId) {
+      setProfile(cachedUserData.profile);
+      setIsAdmin(cachedUserData.isAdmin);
+      return;
+    }
+
     try {
-      // Run both queries in parallel
-      const [profileResult, roleResult] = await Promise.all([
+      // Fetch in parallel with timeout
+      const timeoutPromise = new Promise<null>((resolve) => 
+        setTimeout(() => resolve(null), 5000)
+      );
+
+      const fetchPromise = Promise.all([
         supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
-          .maybeSingle(),
+          .single(),
         supabase
           .from('user_roles')
           .select('role')
@@ -60,36 +76,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           .maybeSingle()
       ]);
 
+      const result = await Promise.race([fetchPromise, timeoutPromise]);
+      
+      if (!result) {
+        console.warn('User data fetch timed out');
+        return;
+      }
+
+      const [profileResult, roleResult] = result;
+
       if (profileResult.data) {
         setProfile(profileResult.data as Profile);
-      } else if (profileResult.error) {
-        console.warn('Profile fetch error:', profileResult.error);
+        cachedUserData = {
+          profile: profileResult.data as Profile,
+          isAdmin: !!roleResult.data
+        };
       }
 
       setIsAdmin(!!roleResult.data);
     } catch (error) {
-      console.error('Error fetching profile/role:', error);
-    }
-  }, []);
-
-  const refreshProfile = async () => {
-    if (user) {
-      await fetchProfileAndRole(user.id);
+      console.warn('Error fetching user data:', error);
+      // Don't block auth if profile fetch fails
     }
   };
 
-  const refreshSession = async () => {
-    try {
-      const { data: { session }, error } = await supabase.auth.refreshSession();
-      if (error) throw error;
-      
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        await fetchProfileAndRole(session.user.id);
-      }
-    } catch (error) {
-      console.error('Session refresh error:', error);
+  const refreshProfile = async () => {
+    if (user) {
+      cachedUserData = null; // Clear cache
+      await fetchUserData(user.id);
     }
   };
 
@@ -98,31 +112,52 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     let authStateSubscription: { unsubscribe: () => void } | null = null;
 
     const initializeAuth = async () => {
-      setIsLoading(true);
+      if (!mounted) return;
       
       try {
-        // First, get any existing session
+        // Set loading immediately for better UX
+        setIsLoading(true);
+        
+        // Check for session WITHOUT triggering re-authentication
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.error('Error getting initial session:', error);
-          // Clear any corrupted auth data
-          localStorage.removeItem('supabase.auth.token');
-          localStorage.removeItem('sb-wiatwgizafrqmbggxbdk.auth.token');
-        }
-        
-        if (mounted) {
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            await fetchProfileAndRole(session.user.id);
+          console.warn('Session check error:', error);
+          if (mounted) {
+            setSession(null);
+            setUser(null);
+            setProfile(null);
+            setIsAdmin(false);
           }
+          return;
+        }
+
+        if (!mounted) return;
+
+        if (session) {
+          setSession(session);
+          setUser(session.user);
+          
+          // Fetch user data in background - don't wait for it
+          fetchUserData(session.user.id).finally(() => {
+            if (mounted) {
+              setIsLoading(false);
+            }
+          });
+        } else {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setIsAdmin(false);
+          setIsLoading(false);
         }
       } catch (error) {
-        console.error('Auth initialization error:', error);
-      } finally {
+        console.warn('Auth init error:', error);
         if (mounted) {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setIsAdmin(false);
           setIsLoading(false);
         }
       }
@@ -130,55 +165,55 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     initializeAuth();
 
-    // Set up auth state change listener AFTER initial load
+    // Set up auth listener with debounce
+    let listenerTimeout: NodeJS.Timeout;
     const setupAuthListener = () => {
       authStateSubscription = supabase.auth.onAuthStateChange(
-        async (event, session) => {
-          console.log('Auth state change:', event, 'Session exists:', !!session);
-          
+        async (event, newSession) => {
           if (!mounted) return;
-          
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            await fetchProfileAndRole(session.user.id);
-          } else {
-            setProfile(null);
-            setIsAdmin(false);
-          }
-          
-          setIsLoading(false);
+
+          // Debounce rapid auth state changes
+          clearTimeout(listenerTimeout);
+          listenerTimeout = setTimeout(async () => {
+            console.log('Auth state change:', event);
+            
+            if (newSession?.user?.id !== user?.id) {
+              cachedUserData = null; // Clear cache on user change
+            }
+            
+            setSession(newSession);
+            setUser(newSession?.user ?? null);
+            
+            if (newSession?.user) {
+              await fetchUserData(newSession.user.id);
+            } else {
+              setProfile(null);
+              setIsAdmin(false);
+            }
+            
+            setIsLoading(false);
+          }, 100);
         }
       ).data.subscription;
     };
 
-    // Delay listener setup to avoid race conditions
-    setTimeout(setupAuthListener, 100);
-
-    // Set up session refresh timer
-    const sessionRefreshInterval = setInterval(async () => {
-      if (session && mounted) {
-        const expiresIn = session.expires_at - Math.floor(Date.now() / 1000);
-        if (expiresIn < 300) { // Refresh if less than 5 minutes left
-          console.log('Auto-refreshing session...');
-          await refreshSession();
-        }
-      }
-    }, 60000); // Check every minute
+    // Wait a bit before setting up listener
+    const listenerSetupTimeout = setTimeout(setupAuthListener, 300);
 
     return () => {
       mounted = false;
+      clearTimeout(listenerSetupTimeout);
+      clearTimeout(listenerTimeout);
       if (authStateSubscription) {
         authStateSubscription.unsubscribe();
       }
-      clearInterval(sessionRefreshInterval);
     };
-  }, [fetchProfileAndRole]);
+  }, []);
 
   const signIn = async (email: string, password: string) => {
     try {
-      console.log('Signing in:', email);
+      setIsLoading(true);
+      cachedUserData = null; // Clear cache on new sign in
       
       const { data, error } = await supabase.auth.signInWithPassword({ 
         email, 
@@ -186,9 +221,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
       
       if (error) {
-        console.error('Sign in error:', error);
+        setIsLoading(false);
         
-        // Handle specific errors
         if (error.message.includes('Email not confirmed')) {
           return { error: new Error('Please verify your email first. Check your inbox.') };
         }
@@ -200,11 +234,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (data.session) {
         setSession(data.session);
         setUser(data.session.user);
-        await fetchProfileAndRole(data.session.user.id);
+        await fetchUserData(data.session.user.id);
       }
       
+      setIsLoading(false);
       return { error: null };
     } catch (error: any) {
+      setIsLoading(false);
       console.error('Sign in exception:', error);
       return { error };
     }
@@ -212,48 +248,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
-      console.log('Signing up:', email);
+      setIsLoading(true);
       
-      // Use the correct callback URL
       const siteUrl = window.location.origin;
       const redirectUrl = `${siteUrl}/auth/callback`;
-      
-      console.log('Redirect URL:', redirectUrl);
       
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
           emailRedirectTo: redirectUrl,
-          data: {
-            full_name: fullName,
-          },
+          data: { full_name: fullName },
         },
       });
       
       if (error) {
-        console.error('Sign up error:', error);
+        setIsLoading(false);
         return { error };
       }
       
-      console.log('Sign up response:', {
-        userId: data.user?.id,
-        emailConfirmed: data.user?.email_confirmed_at,
-        confirmationSent: data.user?.confirmation_sent_at,
-        hasSession: !!data.session
-      });
-      
-      // If we get a session immediately, update state
-      if (data.session) {
-        setSession(data.session);
-        setUser(data.session.user);
-        if (data.session.user) {
-          await fetchProfileAndRole(data.session.user.id);
-        }
-      }
-      
+      // Don't automatically sign in - wait for email confirmation
+      setIsLoading(false);
       return { error: null };
     } catch (error: any) {
+      setIsLoading(false);
       console.error('Sign up exception:', error);
       return { error };
     }
@@ -261,13 +279,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signOut = async () => {
     try {
+      setIsLoading(true);
+      cachedUserData = null; // Clear cache on sign out
       await supabase.auth.signOut();
       setUser(null);
       setSession(null);
       setProfile(null);
       setIsAdmin(false);
+      setIsLoading(false);
     } catch (error) {
       console.error('Sign out error:', error);
+      setIsLoading(false);
     }
   };
 
@@ -282,7 +304,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       signUp,
       signOut,
       refreshProfile,
-      refreshSession,
     }}>
       {children}
     </AuthContext.Provider>
