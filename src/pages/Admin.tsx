@@ -148,8 +148,7 @@ const Admin = () => {
         supabase
           .from('jobs')
           .select('*, category:job_categories(name)')
-          .order('created_at', { ascending: false })
-          .limit(50),
+          .order('created_at', { ascending: false }),
         supabase.from('job_categories').select('*').order('name'),
       ]);
 
