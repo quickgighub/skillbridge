@@ -89,7 +89,7 @@ import {
   Tag as TagIcon, Award as AwardIcon, Book as BookIcon,
   Globe as GlobeIcon, PenTool as PenToolIcon,
   Bookmark as BookmarkIcon, FileText as FileTextIcon,
-  Highlighter as HighlighterIcon, Newspaper,
+  Highlighter as HighlighterIcon,
   BookOpen as BookOpenIcon, FileEdit as FileEditIcon,
   Languages as LanguagesIcon, Globe2 as Globe2Icon,
   Calculator as CalculatorIcon, Calendar as CalendarIcon,
