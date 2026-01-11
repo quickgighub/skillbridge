@@ -1,12 +1,31 @@
 import { Cloudinary } from '@cloudinary/url-gen';
 
-// Cloudinary configuration
-const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'demo';
-const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'ml_default';
+// Try to get the full Cloudinary URL from environment
+const cloudinaryUrl = import.meta.env.CLOUDINARY_URL;
+
+// Parse the Cloudinary URL if available
+let cloudName = 'demo';
+let uploadPreset = 'ml_default';
+
+if (cloudinaryUrl) {
+  try {
+    // Parse cloudinary://api_key:api_secret@cloud_name
+    const url = new URL(cloudinaryUrl.replace('cloudinary://', 'http://'));
+    cloudName = url.hostname;
+    console.log('Parsed Cloudinary URL, cloudName:', cloudName);
+  } catch (error) {
+    console.error('Error parsing CLOUDINARY_URL:', error);
+  }
+} else {
+  // Fallback to individual env variables
+  cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'demo';
+  uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'ml_default';
+}
 
 console.log('Cloudinary Config:', {
   cloudName,
   uploadPreset,
+  hasFullUrl: !!cloudinaryUrl,
   isDemo: cloudName === 'demo'
 });
 
@@ -16,6 +35,8 @@ export const cld = new Cloudinary({
     cloudName: cloudName
   }
 });
+
+// ... rest of your code remains the same ...
 
 /**
  * Upload file to Cloudinary with fallback support
