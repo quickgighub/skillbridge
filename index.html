@@ -11,8 +11,15 @@
 
     <title>SkillBridge - Premium Freelancing Platform</title>
 
-    <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <!-- Favicon - Multiple formats for compatibility -->
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="any">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/site.webmanifest">
+    
+    <!-- For modern browsers -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 
     <!-- iOS specific tags -->
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -51,6 +58,65 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Favicon fallback script -->
+    <script>
+      // Check if favicon loads, if not, create a fallback
+      document.addEventListener('DOMContentLoaded', function() {
+        // Test if favicon loaded
+        const testIcon = new Image();
+        testIcon.onerror = function() {
+          console.log('Favicon not found, creating fallback');
+          
+          // Create a canvas favicon as fallback
+          const canvas = document.createElement('canvas');
+          canvas.width = 64;
+          canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          
+          // Draw simple SB logo
+          if (ctx) {
+            // Background
+            ctx.fillStyle = '#667eea';
+            ctx.fillRect(0, 0, 64, 64);
+            
+            // SB text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('SB', 32, 32);
+            
+            // Create link element
+            const link = document.createElement('link');
+            link.rel = 'icon';
+            link.href = canvas.toDataURL('image/png');
+            document.head.appendChild(link);
+          }
+        };
+        
+        testIcon.src = '/favicon.ico';
+        
+        // Also check for PNG favicon
+        setTimeout(function() {
+          const icons = document.querySelectorAll('link[rel*="icon"]');
+          let hasIcon = false;
+          icons.forEach(function(icon) {
+            if (icon.href && !icon.href.includes('data:')) {
+              hasIcon = true;
+            }
+          });
+          
+          if (!hasIcon) {
+            console.log('No favicon found, adding default');
+            const defaultIcon = document.createElement('link');
+            defaultIcon.rel = 'icon';
+            defaultIcon.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤝</text></svg>';
+            document.head.appendChild(defaultIcon);
+          }
+        }, 1000);
+      });
+    </script>
     
     <!-- Optional: Add mobile detection script -->
     <script>
